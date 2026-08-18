@@ -1,5 +1,8 @@
 /**
  * AI Usage — Desktop status bar chip.
+ *
+ * Fetches usage for all enabled providers and shows the first one with data.
+ * No need to detect the active provider — just show what's available.
  */
 import { host, Tip, cn } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -75,81 +78,51 @@ function ProviderUsageChip(props) {
 }
 
 function UsageChip() {
-  const [activeProviderId, setActiveProviderId] = useState(null)
-  const [providerData, setProviderData] = useState(null)
-  const [allProviders, setAllProviders] = useState([])
+  const [providers, setProviders] = useState(null)
   const [error, setError] = useState(null)
-  const [debug, setDebug] = useState('loading...')
 
-  // Fetch the active provider from gateway config
-  useEffect(() => {
-    host.request('config.get', { key: 'model.provider' }).then(val => {
-      setDebug('provider=' + (val || 'null'))
-      if (val) setActiveProviderId(val)
-    }).catch(e => {
-      setDebug('config error: ' + String(e))
-    })
-  }, [])
-
-  // Fetch provider metadata once
-  useEffect(() => {
-    host.request('plugin.rest', {
-      pluginId: ID, path: '/providers', method: 'GET', timeoutMs: 10000,
-    }).then(r => { if (r?.providers) setAllProviders(r.providers) }).catch(() => {})
-  }, [])
-
-  // Fetch usage for the active provider
-  const fetchUsage = useCallback(async () => {
-    if (!activeProviderId) { setProviderData(null); return }
+  const fetchAll = useCallback(async () => {
     try {
       const resp = await host.request('plugin.rest', {
-        pluginId: ID, path: '/usage/' + activeProviderId, method: 'GET', timeoutMs: 20000,
+        pluginId: ID, path: '/usage', method: 'GET', timeoutMs: 20000,
       })
-      if (resp?.error === 'unknown-provider' || resp?.error === 'provider-disabled') {
-        setProviderData(null); setError(null)
-      } else if (resp?.error) {
-        setError(resp.error); setProviderData(resp)
+      if (resp?.providers) {
+        setProviders(resp.providers)
+        setError(null)
       } else {
-        setProviderData(resp); setError(null)
+        setError(resp?.error || 'no-data')
       }
     } catch {
-      setError('connection-failed'); setProviderData(null)
+      setError('connection-failed')
     }
-  }, [activeProviderId])
+  }, [])
 
   useEffect(() => {
-    fetchUsage()
-    const timer = setInterval(fetchUsage, REFRESH_MS)
+    fetchAll()
+    const timer = setInterval(fetchAll, REFRESH_MS)
     return () => clearInterval(timer)
-  }, [fetchUsage])
+  }, [fetchAll])
 
-  // Always show debug info
-  if (!activeProviderId) {
+  if (error && !providers) {
     return jsx('span', {
       className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: 'OC — ' + debug,
+      children: 'AI ⚠ ' + error,
     })
   }
 
-  const meta = allProviders.find(p => p.id === activeProviderId)
-
-  if (error && !providerData) {
-    const dn = meta?.name || activeProviderId
-    return jsx(Tip, {
-      label: dn + ' — connection failed',
-      children: jsx('button', {
-        className: cn('inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem]', 'text-(--ui-text-quaternary) cursor-default'),
-        type: 'button',
-        children: shortName(dn) + ' ⚠',
-      }),
+  if (!providers) {
+    return jsx('span', {
+      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
+      children: 'AI …',
     })
   }
 
-  if (!providerData) {
-    const dn = meta?.name || activeProviderId
+  // Show first provider that has usage data
+  const active = providers.find(p => p.usage && !p.error)
+  if (!active) {
     return jsx('span', {
       className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: shortName(dn) + ' …',
+      children: 'AI — no data',
     })
   }
 
@@ -157,14 +130,7 @@ function UsageChip() {
     className: cn('inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
       'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'),
     type: 'button',
-    children: jsx(ProviderUsageChip, {
-      provider: {
-        name: providerData.name || meta?.name || activeProviderId,
-        windows: providerData.windows || meta?.windows || [],
-        usage: providerData.usage,
-        error: providerData.error,
-      }
-    }),
+    children: jsx(ProviderUsageChip, { provider: active }),
   })
 }
 
