@@ -1,14 +1,13 @@
 {
   "name": "opencode-usage",
   "label": "OpenCode Usage",
-  "description": "Track OpenCode Go API usage across rolling, weekly, and monthly windows",
+  "description": "Backend API for the OpenCode Go desktop usage chip.",
   "icon": "Activity",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "tab": {
     "path": "/opencode-usage",
-    "position": "after:skills"
+    "hidden": true
   },
   "entry": "dist/index.js",
-  "css": "dist/style.css",
   "api": "plugin_api.py"
 }

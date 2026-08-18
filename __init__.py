@@ -1,2 +1,6 @@
-# opencode_usage plugin package
-# Routes are mounted via the 'router' APIRouter in dashboard/plugin_api.py
+"""Agent-side registration shim for the unified OpenCode Usage plugin."""
+
+
+def register(ctx) -> None:
+    """The plugin contributes no agent tools; its API is mounted by Hermes Dashboard."""
+    return None

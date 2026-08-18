@@ -1,5 +1,5 @@
 name: opencode-usage
-version: 1.0.0
-description: "OpenCode Go usage tracker — monitors rolling, weekly, and monthly usage with percent and status indicators"
+version: 1.0.1
+description: "OpenCode Go usage tracker for the Hermes Desktop status bar"
 author: meviusisback
-kind: dashboard
+kind: standalone
