@@ -1,14 +1,18 @@
 """
-AI Usage — Plugin API backend (self-contained).
+AI Usage — Plugin API backend (FastAPI router).
 """
 import os, json, ssl, stat, urllib.request, urllib.error, logging
 from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
 
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 4096
 MAX_ENV_FILE_BYTES = 65536
 logger = logging.getLogger(__name__)
 _key_cache = {}
+
+router = APIRouter()
 
 
 # ── Inline provider registry ──────────────────────────────────────────
@@ -121,40 +125,42 @@ def _fetch_usage(provider, api_key, ssl_ctx):
     return {"error": None, "usage": usage}
 
 
-# ── Flask routes ──────────────────────────────────────────────────────
+# ── FastAPI routes ────────────────────────────────────────────────────
 
-def register(flask_app):
-    _ssl_ctx = ssl.create_default_context()
+_ssl_ctx = ssl.create_default_context()
 
-    @flask_app.route("/providers", methods=["GET"])
-    def list_providers():
-        providers = get_enabled_providers()
-        return {"providers": [{"id": p["id"], "name": p["name"], "windows": p.get("windows", [])} for p in providers]}
 
-    @flask_app.route("/usage", methods=["GET"])
-    def get_all_usage():
-        keys = _read_api_keys()
-        providers = get_enabled_providers()
-        results = []
-        for p in providers:
-            api_key = keys.get(p["key_env"])
-            if not api_key:
-                results.append({"id": p["id"], "name": p["name"], "windows": p.get("windows", []), "error": "no-api-key", "usage": None})
-                continue
-            result = _fetch_usage(p, api_key, _ssl_ctx)
-            results.append({"id": p["id"], "name": p["name"], "windows": p.get("windows", []), "error": result.get("error"), "usage": result.get("usage")})
-        return {"providers": results}
+@router.get("/providers")
+def list_providers():
+    providers = get_enabled_providers()
+    return {"providers": [{"id": p["id"], "name": p["name"], "windows": p.get("windows", [])} for p in providers]}
 
-    @flask_app.route("/usage/<provider_id>", methods=["GET"])
-    def get_provider_usage(provider_id):
-        provider = get_provider_by_id(provider_id)
-        if not provider:
-            return {"error": "unknown-provider"}, 404
-        if not provider.get("enabled", True):
-            return {"error": "provider-disabled"}, 400
-        keys = _read_api_keys()
-        api_key = keys.get(provider["key_env"])
+
+@router.get("/usage")
+def get_all_usage():
+    keys = _read_api_keys()
+    providers = get_enabled_providers()
+    results = []
+    for p in providers:
+        api_key = keys.get(p["key_env"])
         if not api_key:
-            return {"id": provider["id"], "name": provider["name"], "windows": provider.get("windows", []), "error": "no-api-key", "usage": None}
-        result = _fetch_usage(provider, api_key, _ssl_ctx)
-        return {"id": provider["id"], "name": provider["name"], "windows": provider.get("windows", []), "error": result.get("error"), "usage": result.get("usage")}
+            results.append({"id": p["id"], "name": p["name"], "windows": p.get("windows", []), "error": "no-api-key", "usage": None})
+            continue
+        result = _fetch_usage(p, api_key, _ssl_ctx)
+        results.append({"id": p["id"], "name": p["name"], "windows": p.get("windows", []), "error": result.get("error"), "usage": result.get("usage")})
+    return {"providers": results}
+
+
+@router.get("/usage/{provider_id}")
+def get_provider_usage(provider_id: str):
+    provider = get_provider_by_id(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="unknown-provider")
+    if not provider.get("enabled", True):
+        raise HTTPException(status_code=400, detail="provider-disabled")
+    keys = _read_api_keys()
+    api_key = keys.get(provider["key_env"])
+    if not api_key:
+        return {"id": provider["id"], "name": provider["name"], "windows": provider.get("windows", []), "error": "no-api-key", "usage": None}
+    result = _fetch_usage(provider, api_key, _ssl_ctx)
+    return {"id": provider["id"], "name": provider["name"], "windows": provider.get("windows", []), "error": result.get("error"), "usage": result.get("usage")}
