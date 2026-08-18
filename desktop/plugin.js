@@ -6,6 +6,10 @@
  *   OpenCode Go → 5h / W / M windows (% used)
  *   OpenRouter   → remaining credit balance ($)
  *   DeepSeek     → remaining balance ($)
+ *
+ * The backend (/summary) reports `active_provider` — the plugin id of the
+ * configured model's provider — so the chip hides when the active model is
+ * from a provider we don't track.
  */
 import { Tip, cn, host, useValue } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
@@ -26,15 +30,6 @@ function balanceTone(value) {
   if (value < 1) return 'var(--destructive)'
   if (value < 3) return 'var(--ui-accent)'
   return 'var(--ui-text-secondary)'
-}
-
-// Map the gateway's provider slug to a summary provider id.
-function providerIdFor(configProvider) {
-  const p = String(configProvider ?? '').toLowerCase()
-  if (p.includes('opencode')) return 'opencode'
-  if (p.includes('openrouter')) return 'openrouter'
-  if (p.includes('deepseek')) return 'deepseek'
-  return null
 }
 
 function WindowBadge({ w }) {
@@ -72,21 +67,7 @@ function ProviderBadge({ provider }) {
 function UsageChip({ rest }) {
   const [summary, setSummary] = useState(null)
   const [fetchError, setFetchError] = useState(null)
-  const [activeProvider, setActiveProvider] = useState(null)
   const modelSlug = useValue(host.state.model)
-
-  // Read the active model's provider from the gateway config
-  // ({ key: 'model' } → { value: { default, provider, base_url, api_mode } }).
-  const checkProvider = useCallback(async () => {
-    try {
-      const res = await host.request('config.get', { key: 'model' })
-      const value = res && typeof res === 'object' ? (res.value ?? res) : null
-      const provider = value && typeof value === 'object' ? value.provider : null
-      setActiveProvider(providerIdFor(provider))
-    } catch {
-      setActiveProvider(null)
-    }
-  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -98,24 +79,17 @@ function UsageChip({ rest }) {
     }
   }, [rest])
 
-  // Re-detect the active provider the instant the model slug changes.
+  // Re-fetch the instant the model slug changes (switch provider immediately).
   useEffect(() => {
-    void checkProvider()
-  }, [checkProvider, modelSlug])
-
-  // Fetch usage + re-check the provider on a cadence.
-  useEffect(() => {
-    void checkProvider()
     void refresh()
-    const timer = setInterval(() => {
-      void checkProvider()
-      void refresh()
-    }, REFRESH_MS)
-    return () => clearInterval(timer)
-  }, [checkProvider, refresh])
+  }, [refresh, modelSlug])
 
-  // A model from a provider we don't track → hide the chip entirely.
-  if (!activeProvider) return null
+  // Periodic refresh.
+  useEffect(() => {
+    void refresh()
+    const timer = setInterval(() => void refresh(), REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [refresh])
 
   if (fetchError && !summary) {
     return jsx(Tip, {
@@ -135,7 +109,9 @@ function UsageChip({ rest }) {
   }
 
   const providers = Array.isArray(summary.providers) ? summary.providers : []
-  const active = providers.find((p) => p.id === activeProvider)
+  const active = providers.find((p) => p.id === summary.active_provider)
+
+  // Active model is from a provider we don't track → hide the chip.
   if (!active) return null
 
   // OpenCode renders its three windows; other providers a single balance badge.

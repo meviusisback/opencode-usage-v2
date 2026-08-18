@@ -223,3 +223,13 @@ def test_fetch_opencode_exposes_individual_windows(monkeypatch):
     ]
     assert metric["label"] == "40%"
     assert metric["kind"] == "percent"
+
+
+def test_provider_id_for_maps_slug_and_base_url():
+    assert plugin_api._provider_id_for("opencode-go", None) == "opencode"
+    assert plugin_api._provider_id_for("opencode-zen", None) == "opencode"
+    assert plugin_api._provider_id_for("openrouter", None) == "openrouter"
+    assert plugin_api._provider_id_for("deepseek", None) == "deepseek"
+    assert plugin_api._provider_id_for("custom", "https://openrouter.ai/api/v1") == "openrouter"
+    assert plugin_api._provider_id_for("anthropic", "https://api.anthropic.com") is None
+    assert plugin_api._provider_id_for(None, None) is None
