@@ -95,6 +95,9 @@ function UsageChip() {
   const [allProviders, setAllProviders] = useState([])
   const [error, setError] = useState(null)
 
+  // Always show something so we can debug
+  const debugInfo = 'model=' + (model || 'null') + ' provider=' + (activeProviderId || 'null')
+
   useEffect(() => {
     host.request('plugin.rest', {
       pluginId: ID, path: '/providers', method: 'GET', timeoutMs: 10000,
@@ -125,7 +128,14 @@ function UsageChip() {
     return () => clearInterval(timer)
   }, [fetchUsage])
 
-  if (!activeProviderId) return null
+  // Always render something for debugging
+  if (!activeProviderId) {
+    return jsx('span', {
+      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
+      children: 'OC — ' + debugInfo,
+    })
+  }
+
   const meta = allProviders.find(p => p.id === activeProviderId)
 
   if (error && !providerData) {
@@ -166,6 +176,7 @@ function UsageChip() {
 export default {
   id: ID,
   name: 'AI Usage',
+  defaultEnabled: true,
   register(ctx) {
     ctx.register({ id: 'chip', area: 'statusBar.right', order: 200, render: () => jsx(UsageChip, {}) })
   },
