@@ -1,17 +1,12 @@
 /**
  * AI Usage — Desktop status bar chip (session-aware).
  *
- * Watches the active session's model to detect the current provider,
- * fetches ONLY that provider's usage, and renders its declared windows.
- *
- * - OpenCode Go: "OC 5h 39% · W 15% · M 13%"
- * - Untracked provider: chip hides
- *
+ * Fetches the active provider from gateway config, then shows its usage.
  * Refreshes every 60s. To add a new provider: edit providers.py.
  */
-import { host, Tip, cn, useValue } from '@hermes/plugin-sdk'
+import { host, Tip, cn } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 const ID = 'opencode-usage'
 const REFRESH_MS = 60000
@@ -26,12 +21,6 @@ function statusColor(percent) {
   if (percent >= 90) return '#ef4444'
   if (percent >= 70) return '#f59e0b'
   return '#22c55e'
-}
-
-function providerFromModel(model) {
-  if (!model || typeof model !== 'string') return null
-  const slash = model.indexOf('/')
-  return slash > 0 ? model.slice(0, slash) : null
 }
 
 function shortName(name) {
@@ -89,21 +78,28 @@ function ProviderUsageChip(props) {
 }
 
 function UsageChip() {
-  const model = useValue(host.state.model)
-  const activeProviderId = useMemo(() => providerFromModel(model), [model])
+  const [activeProviderId, setActiveProviderId] = useState(null)
   const [providerData, setProviderData] = useState(null)
   const [allProviders, setAllProviders] = useState([])
   const [error, setError] = useState(null)
 
-  // Always show something so we can debug
-  const debugInfo = 'model=' + (model || 'null') + ' provider=' + (activeProviderId || 'null')
+  // Fetch the active provider from gateway config
+  useEffect(() => {
+    host.request('config.get', {}).then(config => {
+      // Provider is at config.model.provider
+      const provider = config?.model?.provider
+      if (provider) setActiveProviderId(provider)
+    }).catch(() => {})
+  }, [])
 
+  // Fetch provider metadata once
   useEffect(() => {
     host.request('plugin.rest', {
       pluginId: ID, path: '/providers', method: 'GET', timeoutMs: 10000,
     }).then(r => { if (r?.providers) setAllProviders(r.providers) }).catch(() => {})
   }, [])
 
+  // Fetch usage for the active provider
   const fetchUsage = useCallback(async () => {
     if (!activeProviderId) { setProviderData(null); return }
     try {
@@ -128,14 +124,7 @@ function UsageChip() {
     return () => clearInterval(timer)
   }, [fetchUsage])
 
-  // Always render something for debugging
-  if (!activeProviderId) {
-    return jsx('span', {
-      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: 'OC — ' + debugInfo,
-    })
-  }
-
+  if (!activeProviderId) return null
   const meta = allProviders.find(p => p.id === activeProviderId)
 
   if (error && !providerData) {
