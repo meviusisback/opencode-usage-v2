@@ -1,1 +1,1 @@
-# opencode_usage plugin package
+from .dashboard.plugin_api import register
