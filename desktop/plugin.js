@@ -83,10 +83,9 @@ function UsageChip() {
 
   // Fetch the active provider from gateway config
   useEffect(() => {
-    host.request('config.get', {}).then(config => {
-      const provider = config?.model?.provider
-      setDebug('provider=' + (provider || 'null'))
-      if (provider) setActiveProviderId(provider)
+    host.request('config.get', { key: 'model.provider' }).then(val => {
+      setDebug('provider=' + (val || 'null'))
+      if (val) setActiveProviderId(val)
     }).catch(e => {
       setDebug('config error: ' + String(e))
     })
