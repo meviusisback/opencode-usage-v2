@@ -1,8 +1,5 @@
 /**
- * AI Usage — Desktop status bar chip (session-aware).
- *
- * Fetches the active provider from gateway config, then shows its usage.
- * Refreshes every 60s. To add a new provider: edit providers.py.
+ * AI Usage — Desktop status bar chip.
  */
 import { host, Tip, cn } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -82,14 +79,17 @@ function UsageChip() {
   const [providerData, setProviderData] = useState(null)
   const [allProviders, setAllProviders] = useState([])
   const [error, setError] = useState(null)
+  const [debug, setDebug] = useState('loading...')
 
   // Fetch the active provider from gateway config
   useEffect(() => {
     host.request('config.get', {}).then(config => {
-      // Provider is at config.model.provider
       const provider = config?.model?.provider
+      setDebug('provider=' + (provider || 'null'))
       if (provider) setActiveProviderId(provider)
-    }).catch(() => {})
+    }).catch(e => {
+      setDebug('config error: ' + String(e))
+    })
   }, [])
 
   // Fetch provider metadata once
@@ -124,7 +124,14 @@ function UsageChip() {
     return () => clearInterval(timer)
   }, [fetchUsage])
 
-  if (!activeProviderId) return null
+  // Always show debug info
+  if (!activeProviderId) {
+    return jsx('span', {
+      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
+      children: 'OC — ' + debug,
+    })
+  }
+
   const meta = allProviders.find(p => p.id === activeProviderId)
 
   if (error && !providerData) {
