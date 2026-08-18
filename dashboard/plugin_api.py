@@ -18,7 +18,7 @@ import os
 import ssl
 import urllib.error
 import urllib.request
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 from fastapi import APIRouter
@@ -31,7 +31,6 @@ OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 4096
-MAX_ENV_FILE_BYTES = 65536
 USER_AGENT = "Mozilla/5.0 (Hermes-Agent; opencode-usage)"
 WINDOWS = [
     {"id": "rolling", "label": "5h"},
@@ -40,33 +39,14 @@ WINDOWS = [
 ]
 
 
-def _hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")).expanduser()
-
-
 def _read_key(env_name: str) -> str | None:
-    """Read a provider key from the process environment or the active profile."""
-    direct = os.environ.get(env_name, "").strip()
-    if direct:
-        return direct
+    """Read a provider key from the process environment.
 
-    env_path = _hermes_home() / ".env"
-    try:
-        if not env_path.is_file() or env_path.stat().st_size > MAX_ENV_FILE_BYTES:
-            return None
-        text = env_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        if key.strip() == env_name:
-            parsed = value.strip().strip("'\"")
-            return parsed or None
-    return None
+    load_hermes_dotenv() runs at process startup before any plugin is mounted,
+    so all .env values are already in os.environ.  No manual file scan needed.
+    """
+    value = os.environ.get(env_name, "").strip()
+    return value or None
 
 
 def _read_api_key() -> str | None:
@@ -274,7 +254,7 @@ def usage() -> dict[str, Any]:
     try:
         body = _request_usage(api_key)
     except Exception as exc:  # noqa: BLE001 - sanitize into the payload
-        logger.warning("OpenCode usage request failed: %s", exc)
+        logger.warning("OpenCode usage request failed", exc_info=True)
         return _payload(error=_transport_error(exc), usage=None)
 
     normalized = _normalize_usage(body)
@@ -285,14 +265,10 @@ def usage() -> dict[str, Any]:
 
 @router.get("/summary")
 def summary() -> dict[str, Any]:
-    providers: list[dict[str, Any]] = []
-    for spec in PROVIDER_SPECS:
-        key: str | None = None
-        for env in spec["key_envs"]:
-            key = _read_key(env)
-            if key:
-                break
+    """Usage/balance for every configured provider, fetched in parallel."""
+    providers: list[dict[str, Any]] = [None] * len(PROVIDER_SPECS)  # type: ignore[list-item]
 
+    def _fetch_one(spec: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         entry: dict[str, Any] = {
             "id": spec["id"],
             "name": spec["name"],
@@ -304,19 +280,33 @@ def summary() -> dict[str, Any]:
             "error": None,
         }
 
+        key: str | None = None
+        for env in spec["key_envs"]:
+            key = _read_key(env)
+            if key:
+                break
+
         if not key:
             entry["error"] = "no-api-key"
-            providers.append(entry)
-            continue
+            return entry  # type: ignore[return-value]
 
         fetcher: Callable[[str], dict[str, Any]] = spec["fetch"]
         try:
             metric = fetcher(key)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Provider %s fetch failed: %s", spec["id"], exc)
+            logger.warning("Provider %s fetch failed", spec["id"], exc_info=True)
             metric = {"error": _transport_error(exc)}
 
         entry.update(metric)
-        providers.append(entry)
+        return entry  # type: ignore[return-value]
+
+    with ThreadPoolExecutor(max_workers=len(PROVIDER_SPECS)) as pool:
+        futures = {
+            pool.submit(_fetch_one, spec): idx
+            for idx, spec in enumerate(PROVIDER_SPECS)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            providers[idx] = future.result()
 
     return {"providers": providers}
