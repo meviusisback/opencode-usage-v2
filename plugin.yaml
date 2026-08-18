@@ -1,5 +1,5 @@
-name: opencode_usage
-label: AI Usage
-description: Show current session AI provider usage in the desktop status bar
-version: 0.1.0
-api: dashboard/plugin_api.py
+name: opencode-usage
+version: 1.0.0
+description: "OpenCode Go usage tracker — monitors rolling, weekly, and monthly usage with percent and status indicators"
+author: meviusisback
+kind: dashboard

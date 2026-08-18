@@ -1,146 +1,268 @@
 /**
- * AI Usage — Desktop status bar chip.
+ * OpenCode Usage — Desktop plugin for Hermes.
  *
- * Fetches usage for all enabled providers and shows the first one with data.
- * Uses ctx.rest() to call the Python backend.
+ * Shows OpenCode Go API usage as a chip in the status bar area.
+ * Displays three usage windows: rolling (5h), weekly (W), monthly (M)
+ * with percent and status indicators.
  */
-import { host, Tip, cn } from '@hermes/plugin-sdk'
+
+import * as sdk from '@hermes/plugin-sdk'
+import { atom, cn, host, useQuery, useValue } from '@hermes/plugin-sdk'
+import { useEffect, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useState, useEffect, useCallback } from 'react'
 
-const REFRESH_MS = 60000
+const ID = 'opencode-usage'
 
-function formatPercent(val) {
-  if (val == null || isNaN(val)) return '—'
-  return Math.round(val) + '%'
-}
+/** Usage data cache */
+const $usageData = atom(null)
+const $loading = atom(true)
+const $error = atom(null)
 
-function statusColor(percent) {
-  if (percent == null) return 'var(--ui-text-quaternary)'
-  if (percent >= 90) return '#ef4444'
-  if (percent >= 70) return '#f59e0b'
-  return '#22c55e'
-}
+/** Poll interval (30 seconds) */
+const POLL_INTERVAL_MS = 30_000
 
-function shortName(name) {
-  if (!name) return '??'
-  return name.split(' ').map(w => w[0]).join('')
-}
-
-function WindowBadge(props) {
-  const { label, percent, resetsAt } = props
-  const color = statusColor(percent)
-  const tip = resetsAt
-    ? label + ': ' + formatPercent(percent) + ' — resets ' + new Date(resetsAt).toLocaleTimeString()
-    : label + ': ' + formatPercent(percent)
-  return jsx(Tip, {
-    label: tip,
-    children: jsx('span', {
-      className: 'inline-flex items-center gap-0.5 text-[0.625rem] font-mono',
-      children: [
-        jsx('span', { className: 'text-(--ui-text-quaternary)', children: label }),
-        jsx('span', { style: { color }, children: formatPercent(percent) }),
-      ],
-    }),
-  })
-}
-
-function ProviderUsageChip(props) {
-  const { name, windows, usage, error } = props.provider
-  if (error && !usage) {
-    return jsx(Tip, {
-      label: name + ' — ' + error,
-      children: jsx('span', {
-        className: 'inline-flex items-center gap-0.5 text-[0.625rem] text-(--ui-text-quaternary)',
-        children: shortName(name) + ' ⚠',
-      }),
-    })
+/**
+ * Fetch usage data from the plugin backend.
+ */
+async function fetchUsage(ctx) {
+  try {
+    $loading.set(true)
+    $error.set(null)
+    const data = await ctx.rest('/usage')
+    $usageData.set(data)
+  } catch (err) {
+    console.error('[opencode-usage] Failed to fetch usage:', err)
+    $error.set(err?.message || 'Failed to fetch usage')
+  } finally {
+    $loading.set(false)
   }
-  if (!usage) return null
-  const badges = []
-  for (let i = 0; i < windows.length; i++) {
-    const w = windows[i]
-    const data = usage[w.id]
-    if (i > 0) badges.push(jsx('span', { key: 's' + i, className: 'text-(--ui-text-quaternary)', children: '·' }))
-    badges.push(jsx(WindowBadge, { key: w.id, label: w.label, percent: data?.percent, resetsAt: data?.resetsAt }))
-  }
-  return jsx(Tip, {
-    label: name + ' (' + windows.map(w => w.label).join(' / ') + ')',
-    children: jsx('span', {
-      className: 'inline-flex items-center gap-0.5 text-[0.625rem] font-mono',
-      children: [
-        jsx('span', { className: 'text-(--ui-text-quaternary) font-semibold', children: shortName(name) }),
-        ...badges,
-      ],
-    }),
-  })
 }
 
-// Store ctx.rest from register()
-let restFn = null
+/**
+ * Get status color based on usage percentage.
+ */
+function getStatusColor(percent) {
+  if (percent >= 90) return 'text-red-500'
+  if (percent >= 70) return 'text-yellow-500'
+  return 'text-green-500'
+}
 
-function UsageChip() {
-  const [providers, setProviders] = useState(null)
-  const [error, setError] = useState(null)
+/**
+ * Get status label based on usage percentage.
+ */
+function getStatusLabel(percent) {
+  if (percent >= 90) return 'critical'
+  if (percent >= 70) return 'warning'
+  return 'ok'
+}
 
-  const fetchAll = useCallback(async () => {
-    if (!restFn) { setError('no-rest'); return }
-    try {
-      const resp = await restFn('/usage', { method: 'GET', timeoutMs: 20000 })
-      if (resp?.providers) {
-        setProviders(resp.providers)
-        setError(null)
-      } else {
-        setError(resp?.error || 'no-data')
-      }
-    } catch (e) {
-      setError('fetch-error: ' + String(e))
-    }
-  }, [])
+/**
+ * Format usage window for display.
+ */
+function formatWindow(windowData, label) {
+  if (!windowData) return null
+
+  const percent = Math.round((windowData.used || 0) / (windowData.limit || 1) * 100)
+  const status = getStatusLabel(percent)
+  const colorClass = getStatusColor(percent)
+
+  return {
+    label,
+    used: windowData.used || 0,
+    limit: windowData.limit || 0,
+    percent,
+    status,
+    colorClass,
+  }
+}
+
+/**
+ * Usage chip component for the status bar.
+ */
+function UsageChip({ ctx }) {
+  const usageData = useValue($usageData)
+  const loading = useValue($loading)
+  const error = useValue($error)
 
   useEffect(() => {
-    fetchAll()
-    const timer = setInterval(fetchAll, REFRESH_MS)
-    return () => clearInterval(timer)
-  }, [fetchAll])
+    fetchUsage(ctx)
+    const interval = setInterval(() => fetchUsage(ctx), POLL_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [ctx])
 
-  if (error && !providers) {
-    return jsx('span', {
-      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: 'AI ⚠ ' + error,
+  if (loading && !usageData) {
+    return jsx('div', {
+      className: 'flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground',
+      children: 'Loading...'
     })
   }
 
-  if (!providers) {
-    return jsx('span', {
-      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: 'AI …',
+  if (error && !usageData) {
+    return jsx('div', {
+      className: 'flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground',
+      title: error,
+      children: 'No data'
     })
   }
 
-  const active = providers.find(p => p.usage && !p.error)
-  if (!active) {
-    return jsx('span', {
-      className: 'inline-flex h-full items-center px-1.5 text-[0.625rem] text-(--ui-text-quaternary)',
-      children: 'AI — no data',
+  if (!usageData) {
+    return null
+  }
+
+  // Extract usage windows from API response
+  const rolling = formatWindow(usageData.rolling || usageData.five_hour, '5h')
+  const weekly = formatWindow(usageData.weekly, 'W')
+  const monthly = formatWindow(usageData.monthly, 'M')
+
+  const windows = [rolling, weekly, monthly].filter(Boolean)
+
+  if (windows.length === 0) {
+    return jsx('div', {
+      className: 'flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground',
+      children: 'No usage data'
     })
   }
 
-  return jsx('button', {
-    className: cn('inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] transition-colors',
-      'text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground'),
-    type: 'button',
-    children: jsx(ProviderUsageChip, { provider: active }),
+  return jsxs('div', {
+    className: 'flex items-center gap-2 px-2 py-1',
+    children: [
+      jsx('span', {
+        className: 'text-xs font-medium text-muted-foreground',
+        children: 'OpenCode'
+      }),
+      windows.map((w) => jsxs('span', {
+        className: cn(
+          'text-xs font-mono',
+          w.colorClass
+        ),
+        title: `${w.label}: ${w.used}/${w.limit} (${w.percent}%) - ${w.status}`,
+        children: [
+          jsx('span', { children: w.label }),
+          jsx('span', { className: 'opacity-70', children: ' ' }),
+          jsx('span', { children: `${w.percent}%` }),
+        ]
+      }, w.label))
+    ]
   })
 }
 
+/**
+ * Full usage detail panel (for potential expansion).
+ */
+function UsageDetail({ ctx }) {
+  const usageData = useValue($usageData)
+  const loading = useValue($loading)
+  const error = useValue($error)
+
+  if (loading) {
+    return jsx('div', {
+      className: 'flex items-center justify-center p-8',
+      children: 'Loading usage data...'
+    })
+  }
+
+  if (error) {
+    return jsxs('div', {
+      className: 'flex flex-col items-center justify-center p-8 text-center',
+      children: [
+        jsx('div', {
+          className: 'text-destructive mb-2',
+          children: 'Error loading usage'
+        }),
+        jsx('div', {
+          className: 'text-sm text-muted-foreground',
+          children: error
+        })
+      ]
+    })
+  }
+
+  if (!usageData) {
+    return jsx('div', {
+      className: 'flex items-center justify-center p-8 text-muted-foreground',
+      children: 'No usage data available'
+    })
+  }
+
+  const rolling = formatWindow(usageData.rolling || usageData.five_hour, 'Rolling (5h)')
+  const weekly = formatWindow(usageData.weekly, 'Weekly')
+  const monthly = formatWindow(usageData.monthly, 'Monthly')
+
+  const windows = [rolling, weekly, monthly].filter(Boolean)
+
+  return jsxs('div', {
+    className: 'p-4 space-y-4',
+    children: [
+      jsx('h2', {
+        className: 'text-lg font-semibold',
+        children: 'OpenCode Go Usage'
+      }),
+      windows.map((w) => jsxs('div', {
+        className: 'border rounded-lg p-3 space-y-2',
+        children: [
+          jsxs('div', {
+            className: 'flex items-center justify-between',
+            children: [
+              jsx('span', {
+                className: 'font-medium',
+                children: w.label
+              }),
+              jsx('span', {
+                className: cn('text-sm', w.colorClass),
+                children: w.status.toUpperCase()
+              })
+            ]
+          }),
+          jsxs('div', {
+            className: 'text-sm text-muted-foreground',
+            children: [
+              jsx('span', { children: w.used.toLocaleString() }),
+              ' / ',
+              jsx('span', { children: w.limit.toLocaleString() }),
+              ' (',
+              jsx('span', { children: `${w.percent}%` }),
+              ')'
+            ]
+          }),
+          jsx('div', {
+            className: 'h-2 bg-secondary rounded-full overflow-hidden',
+            children: jsx('div', {
+              className: cn(
+                'h-full transition-all',
+                w.percent >= 90 ? 'bg-red-500' : w.percent >= 70 ? 'bg-yellow-500' : 'bg-green-500'
+              ),
+              style: { width: `${Math.min(100, w.percent)}%` }
+            })
+          })
+        ]
+      }, w.label))
+    ]
+  })
+}
+
+/**
+ * Plugin registration.
+ */
 export default {
-  id: 'opencode_usage',
-  name: 'AI Usage',
+  id: ID,
+  name: 'OpenCode Usage',
+  description: 'Track OpenCode Go API usage across rolling, weekly, and monthly windows',
   defaultEnabled: true,
+
   register(ctx) {
-    // Store ctx.rest for use in components
-    restFn = ctx.rest.bind(ctx)
-    ctx.register({ id: 'chip', area: 'statusBar.right', order: 200, render: () => jsx(UsageChip, {}) })
-  },
+    // Register status bar chip contribution
+    ctx.register({
+      id: 'status-bar-chip',
+      kind: 'status-bar',
+      position: 'before:clock',
+      component: () => jsx(UsageChip, { ctx }),
+    })
+
+    // Register cleanup
+    ctx.onDispose(() => {
+      $usageData.set(null)
+      $loading.set(true)
+      $error.set(null)
+    })
+  }
 }

@@ -1,8 +1,14 @@
 {
-  "name": "opencode_usage",
-  "label": "AI Usage",
-  "description": "Show current session AI provider usage in the desktop status bar",
-  "icon": "Graph",
-  "version": "0.1.0",
+  "name": "opencode-usage",
+  "label": "OpenCode Usage",
+  "description": "Track OpenCode Go API usage across rolling, weekly, and monthly windows",
+  "icon": "Activity",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/opencode-usage",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
   "api": "plugin_api.py"
 }
