@@ -7,9 +7,9 @@
  *   OpenRouter   → remaining credit balance ($)
  *   DeepSeek     → remaining balance ($)
  *
- * The backend (/summary) reports `active_provider` — the plugin id of the
- * configured model's provider — so the chip hides when the active model is
- * from a provider we don't track.
+ * The active provider is resolved from the gateway config
+ * (`config.get full` → `config.model.provider`). If that RPC fails, the chip
+ * degrades to showing ALL configured providers rather than disappearing.
  */
 import { Tip, cn, host, useValue } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
@@ -30,6 +30,18 @@ function balanceTone(value) {
   if (value < 1) return 'var(--destructive)'
   if (value < 3) return 'var(--ui-accent)'
   return 'var(--ui-text-secondary)'
+}
+
+// Map a provider slug / base URL to a tracked plugin id (null = untracked).
+function providerIdFor(provider, baseUrl) {
+  for (const value of [provider, baseUrl]) {
+    if (!value) continue
+    const v = String(value).toLowerCase()
+    if (v.includes('opencode')) return 'opencode'
+    if (v.includes('openrouter')) return 'openrouter'
+    if (v.includes('deepseek')) return 'deepseek'
+  }
+  return null
 }
 
 function WindowBadge({ w }) {
@@ -64,10 +76,42 @@ function ProviderBadge({ provider }) {
   })
 }
 
+// Render one provider as an array of badge nodes (OC → windows, else single).
+function renderProvider(provider) {
+  if (provider.id === 'opencode' && Array.isArray(provider.windows) && provider.windows.length > 0) {
+    const badges = [
+      jsx('span', { key: 'name', className: 'font-semibold text-(--ui-text-quaternary)', children: provider.display }),
+    ]
+    provider.windows.forEach((w) => {
+      badges.push(jsx('span', { key: `sep-${w.id}`, className: 'text-(--ui-text-quaternary)', children: '·' }))
+      badges.push(jsx(WindowBadge, { key: w.id, w }))
+    })
+    return badges
+  }
+  return [jsx(ProviderBadge, { key: provider.id, provider })]
+}
+
 function UsageChip({ rest }) {
   const [summary, setSummary] = useState(null)
   const [fetchError, setFetchError] = useState(null)
+  const [activeProvider, setActiveProvider] = useState(null)
+  const [providerResolved, setProviderResolved] = useState(false)
   const modelSlug = useValue(host.state.model)
+
+  // Resolve the active model's provider from the gateway config.
+  const checkProvider = useCallback(async () => {
+    try {
+      const res = await host.request('config.get', { key: 'full' })
+      const modelCfg = res && typeof res === 'object' ? (res.config && res.config.model) : null
+      const provider = modelCfg && typeof modelCfg === 'object' ? modelCfg.provider : null
+      const baseUrl = modelCfg && typeof modelCfg === 'object' ? modelCfg.base_url : null
+      setActiveProvider(providerIdFor(provider, baseUrl))
+      setProviderResolved(true)
+    } catch {
+      setActiveProvider(null)
+      setProviderResolved(false)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -79,17 +123,21 @@ function UsageChip({ rest }) {
     }
   }, [rest])
 
-  // Re-fetch the instant the model slug changes (switch provider immediately).
+  // Re-detect the active provider the instant the model slug changes.
   useEffect(() => {
-    void refresh()
-  }, [refresh, modelSlug])
+    void checkProvider()
+  }, [checkProvider, modelSlug])
 
-  // Periodic refresh.
+  // Periodic refresh + provider re-check.
   useEffect(() => {
+    void checkProvider()
     void refresh()
-    const timer = setInterval(() => void refresh(), REFRESH_MS)
+    const timer = setInterval(() => {
+      void checkProvider()
+      void refresh()
+    }, REFRESH_MS)
     return () => clearInterval(timer)
-  }, [refresh])
+  }, [checkProvider, refresh])
 
   if (fetchError && !summary) {
     return jsx(Tip, {
@@ -109,23 +157,24 @@ function UsageChip({ rest }) {
   }
 
   const providers = Array.isArray(summary.providers) ? summary.providers : []
-  const active = providers.find((p) => p.id === summary.active_provider)
+  if (providers.length === 0) return null
 
-  // Active model is from a provider we don't track → hide the chip.
-  if (!active) return null
+  const active = providers.find((p) => p.id === activeProvider)
 
-  // OpenCode renders its three windows; other providers a single balance badge.
   let badges
-  if (active.id === 'opencode' && Array.isArray(active.windows) && active.windows.length > 0) {
-    badges = [
-      jsx('span', { key: 'name', className: 'font-semibold text-(--ui-text-quaternary)', children: active.display }),
-    ]
-    active.windows.forEach((w) => {
-      badges.push(jsx('span', { key: `sep-${w.id}`, className: 'text-(--ui-text-quaternary)', children: '·' }))
-      badges.push(jsx(WindowBadge, { key: w.id, w }))
-    })
+  if (active) {
+    badges = renderProvider(active)
+  } else if (providerResolved) {
+    // Active model is from a provider we don't track → hide the chip.
+    return null
   } else {
-    badges = [jsx(ProviderBadge, { key: active.id, provider: active })]
+    // Provider resolution failed → show every configured provider instead.
+    badges = providers.flatMap((p, i) => {
+      const sep = i > 0
+        ? [jsx('span', { key: `sep-${p.id}`, className: 'text-(--ui-text-quaternary)', children: '·' })]
+        : []
+      return [...sep, ...renderProvider(p)]
+    })
   }
 
   return jsx('button', {

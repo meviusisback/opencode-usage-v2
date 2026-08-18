@@ -19,7 +19,6 @@ import ssl
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter
@@ -244,56 +243,6 @@ def _transport_error(exc: Exception) -> str:
     return "unknown-error"
 
 
-def _provider_id_for(provider: Any, base_url: Any) -> str | None:
-    """Map a provider slug / base URL to a tracked plugin id (pure)."""
-    for value in (provider, base_url):
-        if not value:
-            continue
-        v = str(value).lower()
-        if "opencode" in v:
-            return "opencode"
-        if "openrouter" in v:
-            return "openrouter"
-        if "deepseek" in v:
-            return "deepseek"
-    return None
-
-
-def _active_provider_id() -> str | None:
-    """Resolve the configured model's provider to a tracked plugin id.
-
-    Uses Hermes' own config loader (cached, HERMES_HOME-aware) and falls back
-    to a minimal scan of config.yaml if the import is unavailable.
-    """
-    provider: Any = None
-    base_url: Any = None
-    try:
-        from hermes_cli.config import load_config_readonly
-
-        model_cfg = load_config_readonly().get("model") or {}
-        provider = model_cfg.get("provider")
-        base_url = model_cfg.get("base_url")
-    except Exception:  # noqa: BLE001 - fall back to a config scan
-        try:
-            home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-            text = (home / "config.yaml").read_text(encoding="utf-8", errors="replace")
-            in_model = False
-            for line in text.splitlines():
-                s = line.strip()
-                if s == "model:":
-                    in_model = True
-                elif in_model and s and not line.startswith((" ", "\t")):
-                    in_model = False
-                elif in_model and s.startswith("provider:"):
-                    provider = s.split(":", 1)[1].strip().strip("'\"")
-                elif in_model and s.startswith("base_url:"):
-                    base_url = s.split(":", 1)[1].strip().strip("'\"")
-        except Exception:
-            provider = base_url = None
-
-    return _provider_id_for(provider, base_url)
-
-
 # --- routes -------------------------------------------------------------------
 
 @router.get("/health")
@@ -370,4 +319,4 @@ def summary() -> dict[str, Any]:
             idx = futures[future]
             providers[idx] = future.result()
 
-    return {"providers": providers, "active_provider": _active_provider_id()}
+    return {"providers": providers}
