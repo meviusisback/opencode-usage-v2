@@ -1,6 +1,0 @@
-name: opencode-usage
-version: 1.0.0
-description: "OpenCode Go usage tracker — shows rolling, weekly, and monthly usage as a status bar chip"
-author: meviusisback
-kind: desktop
-entry: plugin.js
