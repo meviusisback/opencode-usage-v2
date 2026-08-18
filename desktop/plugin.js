@@ -1,139 +1,105 @@
 /**
- * OpenCode Usage — Hermes Desktop status-bar plugin.
+ * OpenCode Usage — Hermes Desktop status-bar plugin (multi-provider).
  *
- * Shows OpenCode Go usage (rolling 5h / weekly / monthly) ONLY while the
- * active model is routed through an OpenCode provider (opencode-go / OpenCode
- * Zen). When the model is switched to another provider the chip hides itself.
+ * Shows usage/balance for every provider that has an API key configured:
+ *   OpenCode Go   → % used (rolling 5h / weekly / monthly)
+ *   OpenRouter    → remaining credit balance ($)
+ *   DeepSeek      → remaining balance ($)
+ *
+ * Each provider renders as a compact badge with a tooltip; click to refresh.
  */
-import { Tip, cn, host, useValue } from '@hermes/plugin-sdk'
+import { Tip, cn } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
 import { useCallback, useEffect, useState } from 'react'
 
 const ID = 'opencode-usage'
 const REFRESH_MS = 60_000
 
-function formatPercent(value) {
-  if (value == null || Number.isNaN(Number(value))) return '—'
-  return `${Math.round(Number(value))}%`
-}
-
-function tone(percent) {
-  if (percent == null) return 'var(--ui-text-quaternary)'
-  if (percent >= 90) return 'var(--destructive)'
-  if (percent >= 70) return 'var(--ui-accent)'
+function percentTone(value) {
+  if (value == null) return 'var(--ui-text-quaternary)'
+  if (value >= 90) return 'var(--destructive)'
+  if (value >= 70) return 'var(--ui-accent)'
   return 'var(--ui-text-secondary)'
 }
 
-function WindowBadge({ label, value }) {
-  if (!value) return null
-  const tooltip = value.resetsAt
-    ? `${label}: ${formatPercent(value.percent)} used — resets ${new Date(value.resetsAt).toLocaleString()}`
-    : `${label}: ${formatPercent(value.percent)} used`
+function balanceTone(value) {
+  if (value == null) return 'var(--ui-text-quaternary)'
+  if (value < 1) return 'var(--destructive)'
+  if (value < 3) return 'var(--ui-accent)'
+  return 'var(--ui-text-secondary)'
+}
+
+function toneFor(provider) {
+  if (provider.error) return 'var(--ui-text-quaternary)'
+  if (provider.kind === 'percent') return percentTone(provider.value)
+  return balanceTone(provider.value)
+}
+
+function ProviderBadge({ provider }) {
+  const label = provider.error ? '⚠' : (provider.label ?? '—')
+  const tooltip = provider.error
+    ? `${provider.name} — ${provider.error}`
+    : (provider.detail || `${provider.name}: ${provider.label}`)
 
   return jsx(Tip, {
     label: tooltip,
     children: jsx('span', {
       className: 'inline-flex items-center gap-0.5 text-[0.625rem] font-mono',
       children: [
-        jsx('span', { className: 'text-(--ui-text-quaternary)', children: label }),
-        jsx('span', { style: { color: tone(value.percent) }, children: formatPercent(value.percent) }),
+        jsx('span', { className: 'text-(--ui-text-quaternary)', children: provider.display }),
+        jsx('span', { style: { color: toneFor(provider) }, children: label }),
       ],
     }),
   })
 }
 
 function UsageChip({ rest }) {
-  const [result, setResult] = useState(null)
+  const [summary, setSummary] = useState(null)
   const [fetchError, setFetchError] = useState(null)
-  const [providerInfo, setProviderInfo] = useState(null)
-  const modelSlug = useValue(host.state.model)
-
-  // Read the active model's provider from the gateway config
-  // ({ key: 'model' } → { value: { default, provider, base_url, api_mode } }).
-  const checkProvider = useCallback(async () => {
-    try {
-      const res = await host.request('config.get', { key: 'model' })
-      const value = res && typeof res === 'object' ? (res.value ?? res) : null
-      setProviderInfo(value && typeof value === 'object' ? value : null)
-    } catch {
-      setProviderInfo(null)
-    }
-  }, [])
-
-  // Re-check the instant the composer/model slug changes.
-  useEffect(() => {
-    void checkProvider()
-  }, [checkProvider, modelSlug])
 
   const refresh = useCallback(async () => {
     try {
-      const response = await rest('/usage', { method: 'GET', timeoutMs: 20_000 })
-      setResult(response)
+      const response = await rest('/summary', { method: 'GET', timeoutMs: 20_000 })
+      setSummary(response)
       setFetchError(null)
     } catch (error) {
       setFetchError(error instanceof Error ? error.message : String(error))
     }
   }, [rest])
 
-  // Show the chip only when the active provider is OpenCode. Also re-check the
-  // provider on the refresh cadence (covers model changes made via Settings).
-  const isOpenCode = !!providerInfo && (
-    /opencode/i.test(String(providerInfo.provider ?? '')) ||
-    /opencode/i.test(String(providerInfo.base_url ?? ''))
-  )
-
   useEffect(() => {
-    void checkProvider()
-    if (!isOpenCode) return
     void refresh()
-    const timer = setInterval(() => {
-      void checkProvider()
-      void refresh()
-    }, REFRESH_MS)
+    const timer = setInterval(() => void refresh(), REFRESH_MS)
     return () => clearInterval(timer)
-  }, [checkProvider, refresh, isOpenCode])
+  }, [refresh])
 
-  if (!isOpenCode) return null
-
-  if (fetchError && !result) {
+  if (fetchError && !summary) {
     return jsx(Tip, {
-      label: `OpenCode Usage — ${fetchError}`,
+      label: `Usage — ${fetchError}`,
       children: jsx('span', {
         className: 'inline-flex h-full items-center px-1.5 text-[0.6875rem] text-(--ui-text-quaternary)',
-        children: 'OC ⚠',
+        children: 'Usage ⚠',
       }),
     })
   }
 
-  if (!result) {
+  if (!summary) {
     return jsx('span', {
       className: 'inline-flex h-full items-center px-1.5 text-[0.6875rem] text-(--ui-text-quaternary)',
-      children: 'OC …',
+      children: 'Usage …',
     })
   }
 
-  if (result.error || !result.usage) {
-    const message = result.error === 'no-api-key'
-      ? 'OPENCODE_GO_API_KEY is not configured in the active Hermes profile'
-      : `OpenCode Usage — ${result.error || 'no data'}`
-    return jsx(Tip, {
-      label: message,
-      children: jsx('span', {
-        className: 'inline-flex h-full items-center px-1.5 text-[0.6875rem] text-(--ui-text-quaternary)',
-        children: 'OC ⚠',
-      }),
-    })
-  }
+  const providers = Array.isArray(summary.providers) ? summary.providers : []
+  if (providers.length === 0) return null
 
   const badges = []
-  for (const window of result.windows || []) {
-    const value = result.usage[window.id]
-    if (!value) continue
-    if (badges.length > 0) {
-      badges.push(jsx('span', { key: `sep-${window.id}`, className: 'text-(--ui-text-quaternary)', children: '·' }))
+  providers.forEach((provider, index) => {
+    if (index > 0) {
+      badges.push(jsx('span', { key: `sep-${provider.id}`, className: 'text-(--ui-text-quaternary)', children: '·' }))
     }
-    badges.push(jsx(WindowBadge, { key: window.id, label: window.label, value }))
-  }
+    badges.push(jsx(ProviderBadge, { key: provider.id, provider }))
+  })
 
   return jsx('button', {
     className: cn(
@@ -142,17 +108,14 @@ function UsageChip({ rest }) {
     ),
     type: 'button',
     onClick: () => void refresh(),
-    children: [
-      jsx('span', { key: 'name', className: 'font-semibold text-(--ui-text-quaternary)', children: 'OC' }),
-      ...badges,
-    ],
+    children: badges,
   })
 }
 
 export default {
   id: ID,
-  name: 'OpenCode Usage',
-  description: 'OpenCode Go usage in the status bar — shown only on OpenCode models.',
+  name: 'Usage',
+  description: 'Usage & balance for every configured provider (OpenCode, OpenRouter, DeepSeek).',
   defaultEnabled: false,
   register(ctx) {
     ctx.register({

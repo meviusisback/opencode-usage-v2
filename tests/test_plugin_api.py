@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import urllib.error
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,6 +15,13 @@ plugin_api = importlib.util.module_from_spec(SPEC)
 sys.modules[MODULE_NAME] = plugin_api
 SPEC.loader.exec_module(plugin_api)
 
+PROVIDER_ENV_KEYS = [
+    "OPENCODE_GO_API_KEY",
+    "OPENCODE_ZEN_API_KEY",
+    "OPENROUTER_API_KEY",
+    "DEEPSEEK_API_KEY",
+]
+
 
 def make_client():
     app = FastAPI()
@@ -21,18 +29,40 @@ def make_client():
     return TestClient(app)
 
 
+def clear_provider_keys(monkeypatch):
+    for name in PROVIDER_ENV_KEYS:
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_health_route_is_mounted_at_the_desktop_namespace(monkeypatch):
-    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+    clear_provider_keys(monkeypatch)
     monkeypatch.setenv("HERMES_HOME", str(ROOT / "tests" / "fixtures" / "empty-home"))
 
     response = make_client().get("/api/plugins/opencode-usage/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "api_key_configured": False}
+    assert response.json() == {
+        "status": "ok",
+        "api_key_configured": False,
+        "providers_configured": [],
+    }
+
+
+def test_health_lists_configured_providers(monkeypatch):
+    clear_provider_keys(monkeypatch)
+    monkeypatch.setenv("HERMES_HOME", str(ROOT / "tests" / "fixtures" / "empty-home"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+
+    body = make_client().get("/api/plugins/opencode-usage/health").json()
+
+    assert body["status"] == "ok"
+    assert body["api_key_configured"] is False
+    assert set(body["providers_configured"]) == {"openrouter", "deepseek"}
 
 
 def test_usage_without_key_returns_sanitized_plugin_payload(monkeypatch):
-    monkeypatch.delenv("OPENCODE_GO_API_KEY", raising=False)
+    clear_provider_keys(monkeypatch)
     monkeypatch.setenv("HERMES_HOME", str(ROOT / "tests" / "fixtures" / "empty-home"))
 
     response = make_client().get("/api/plugins/opencode-usage/usage")
@@ -99,3 +129,76 @@ def test_request_sends_browser_user_agent(monkeypatch):
     assert user_agent, "request must set a User-Agent header"
     assert "Python-urllib" not in user_agent
 
+
+# --- /summary (multi-provider) ------------------------------------------------
+
+def test_summary_returns_each_configured_provider(monkeypatch):
+    specs = [
+        {
+            "id": "opencode",
+            "name": "OpenCode Go",
+            "display": "OC",
+            "key_envs": ["OPENCODE_GO_API_KEY"],
+            "fetch": lambda key: {"kind": "percent", "label": "38%", "value": 38.0, "detail": "rolling 38%"},
+        },
+        {
+            "id": "openrouter",
+            "name": "OpenRouter",
+            "display": "OR",
+            "key_envs": ["OPENROUTER_API_KEY"],
+            "fetch": lambda key: {"kind": "balance", "label": "$1.82", "value": 1.82, "detail": "$1.82 left"},
+        },
+    ]
+    monkeypatch.setattr(plugin_api, "PROVIDER_SPECS", specs)
+    monkeypatch.setattr(plugin_api, "_read_key", lambda env: "test-key")
+
+    response = make_client().get("/api/plugins/opencode-usage/summary")
+
+    assert response.status_code == 200
+    providers = response.json()["providers"]
+    assert len(providers) == 2
+    assert providers[0]["id"] == "opencode"
+    assert providers[0]["label"] == "38%"
+    assert providers[0]["error"] is None
+    assert providers[1]["id"] == "openrouter"
+    assert providers[1]["value"] == 1.82
+
+
+def test_summary_marks_provider_without_key(monkeypatch):
+    specs = [
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "display": "DS",
+            "key_envs": ["DEEPSEEK_API_KEY"],
+            "fetch": lambda key: {"kind": "balance", "label": "$6.95", "value": 6.95},
+        },
+    ]
+    monkeypatch.setattr(plugin_api, "PROVIDER_SPECS", specs)
+    monkeypatch.setattr(plugin_api, "_read_key", lambda env: None)
+
+    body = make_client().get("/api/plugins/opencode-usage/summary").json()
+
+    assert body["providers"][0]["error"] == "no-api-key"
+    assert body["providers"][0]["label"] is None
+
+
+def test_summary_sanitizes_transport_errors(monkeypatch):
+    def boom(_key):
+        raise urllib.error.HTTPError("url", 403, "forbidden", None, None)
+
+    specs = [
+        {
+            "id": "opencode",
+            "name": "OpenCode Go",
+            "display": "OC",
+            "key_envs": ["OPENCODE_GO_API_KEY"],
+            "fetch": boom,
+        },
+    ]
+    monkeypatch.setattr(plugin_api, "PROVIDER_SPECS", specs)
+    monkeypatch.setattr(plugin_api, "_read_key", lambda env: "test-key")
+
+    body = make_client().get("/api/plugins/opencode-usage/summary").json()
+
+    assert body["providers"][0]["error"] == "http-403"
