@@ -202,3 +202,24 @@ def test_summary_sanitizes_transport_errors(monkeypatch):
     body = make_client().get("/api/plugins/opencode-usage/summary").json()
 
     assert body["providers"][0]["error"] == "http-403"
+
+
+def test_fetch_opencode_exposes_individual_windows(monkeypatch):
+    upstream = {
+        "usage": {
+            "rolling": {"percent": 40, "status": "ok"},
+            "weekly": {"percent": 57, "status": "ok"},
+            "monthly": {"percent": 34, "status": "ok"},
+        }
+    }
+    monkeypatch.setattr(plugin_api, "_request_usage", lambda _key: upstream)
+
+    metric = plugin_api._fetch_opencode("test-key")
+
+    assert metric["windows"] == [
+        {"id": "rolling", "label": "5h", "percent": 40.0},
+        {"id": "weekly", "label": "W", "percent": 57.0},
+        {"id": "monthly", "label": "M", "percent": 34.0},
+    ]
+    assert metric["label"] == "40%"
+    assert metric["kind"] == "percent"

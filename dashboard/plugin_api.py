@@ -127,6 +127,15 @@ def _fetch_opencode(api_key: str) -> dict[str, Any]:
     if norm is None:
         return {"error": "unexpected-response"}
 
+    windows = [
+        {
+            "id": window["id"],
+            "label": window["label"],
+            "percent": (norm.get(window["id"]) or {}).get("percent"),
+        }
+        for window in WINDOWS
+    ]
+
     rolling = norm.get("rolling") or {}
     weekly = norm.get("weekly") or {}
     monthly = norm.get("monthly") or {}
@@ -143,6 +152,7 @@ def _fetch_opencode(api_key: str) -> dict[str, Any]:
         "label": _pct(headline),
         "value": headline,
         "detail": detail,
+        "windows": windows,
     }
 
 
