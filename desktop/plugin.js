@@ -2,13 +2,12 @@
  * AI Usage — Desktop status bar chip.
  *
  * Fetches usage for all enabled providers and shows the first one with data.
- * No need to detect the active provider — just show what's available.
+ * Uses ctx.rest() to call the Python backend.
  */
 import { host, Tip, cn } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useState, useEffect, useCallback } from 'react'
 
-const ID = 'opencode-usage'
 const REFRESH_MS = 60000
 
 function formatPercent(val) {
@@ -77,23 +76,25 @@ function ProviderUsageChip(props) {
   })
 }
 
+// Store ctx.rest from register()
+let restFn = null
+
 function UsageChip() {
   const [providers, setProviders] = useState(null)
   const [error, setError] = useState(null)
 
   const fetchAll = useCallback(async () => {
+    if (!restFn) { setError('no-rest'); return }
     try {
-      const resp = await host.request('plugin.rest', {
-        pluginId: ID, path: '/usage', method: 'GET', timeoutMs: 20000,
-      })
+      const resp = await restFn('/usage', { method: 'GET', timeoutMs: 20000 })
       if (resp?.providers) {
         setProviders(resp.providers)
         setError(null)
       } else {
         setError(resp?.error || 'no-data')
       }
-    } catch {
-      setError('connection-failed')
+    } catch (e) {
+      setError('fetch-error: ' + String(e))
     }
   }, [])
 
@@ -117,7 +118,6 @@ function UsageChip() {
     })
   }
 
-  // Show first provider that has usage data
   const active = providers.find(p => p.usage && !p.error)
   if (!active) {
     return jsx('span', {
@@ -135,10 +135,12 @@ function UsageChip() {
 }
 
 export default {
-  id: ID,
+  id: 'opencode-usage',
   name: 'AI Usage',
   defaultEnabled: true,
   register(ctx) {
+    // Store ctx.rest for use in components
+    restFn = ctx.rest.bind(ctx)
     ctx.register({ id: 'chip', area: 'statusBar.right', order: 200, render: () => jsx(UsageChip, {}) })
   },
 }
