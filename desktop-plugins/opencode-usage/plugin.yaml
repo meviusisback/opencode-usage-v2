@@ -1,0 +1,4 @@
+name: opencode-usage
+label: AI Usage
+description: Show current session AI provider usage in the desktop status bar
+version: 0.1.0
