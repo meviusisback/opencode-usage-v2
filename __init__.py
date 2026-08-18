@@ -1,1 +1,1 @@
-# opencode-usage plugin package
+# opencode_usage plugin package

@@ -78,7 +78,7 @@ def _read_api_keys():
     try:
         mode = stat.S_IMODE(env_path.stat().st_mode)
         if mode & (stat.S_IRGRP | stat.S_IROTH):
-            logger.warning("opencode-usage: .env has permissive perms (%o)", mode)
+            logger.warning("opencode_usage: .env has permissive perms (%o)", mode)
     except OSError:
         pass
     try:

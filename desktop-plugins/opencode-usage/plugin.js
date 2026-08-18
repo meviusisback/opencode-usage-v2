@@ -135,7 +135,7 @@ function UsageChip() {
 }
 
 export default {
-  id: 'opencode-usage',
+  id: 'opencode_usage',
   name: 'AI Usage',
   defaultEnabled: true,
   register(ctx) {
