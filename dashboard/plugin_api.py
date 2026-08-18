@@ -11,7 +11,10 @@ Endpoints:
 """
 import os, json, ssl, stat, urllib.request, urllib.error, logging
 from pathlib import Path
-from ..providers import get_enabled_providers, get_provider_by_id
+try:
+    from ..providers import get_enabled_providers, get_provider_by_id
+except ImportError:
+    from providers import get_enabled_providers, get_provider_by_id
 
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 4096
