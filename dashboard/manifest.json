@@ -1,0 +1,8 @@
+{
+  "name": "opencode_usage",
+  "label": "AI Usage",
+  "description": "Show current session AI provider usage in the desktop status bar",
+  "icon": "Graph",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}
