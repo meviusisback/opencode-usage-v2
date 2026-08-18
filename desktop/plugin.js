@@ -1,7 +1,11 @@
 /**
  * OpenCode Usage — Hermes Desktop status-bar plugin.
+ *
+ * Shows OpenCode Go usage (rolling 5h / weekly / monthly) ONLY while the
+ * active model is routed through an OpenCode provider (opencode-go / OpenCode
+ * Zen). When the model is switched to another provider the chip hides itself.
  */
-import { Tip, cn } from '@hermes/plugin-sdk'
+import { Tip, cn, host, useValue } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -41,6 +45,25 @@ function WindowBadge({ label, value }) {
 function UsageChip({ rest }) {
   const [result, setResult] = useState(null)
   const [fetchError, setFetchError] = useState(null)
+  const [providerInfo, setProviderInfo] = useState(null)
+  const modelSlug = useValue(host.state.model)
+
+  // Read the active model's provider from the gateway config
+  // ({ key: 'model' } → { value: { default, provider, base_url, api_mode } }).
+  const checkProvider = useCallback(async () => {
+    try {
+      const res = await host.request('config.get', { key: 'model' })
+      const value = res && typeof res === 'object' ? (res.value ?? res) : null
+      setProviderInfo(value && typeof value === 'object' ? value : null)
+    } catch {
+      setProviderInfo(null)
+    }
+  }, [])
+
+  // Re-check the instant the composer/model slug changes.
+  useEffect(() => {
+    void checkProvider()
+  }, [checkProvider, modelSlug])
 
   const refresh = useCallback(async () => {
     try {
@@ -52,11 +75,25 @@ function UsageChip({ rest }) {
     }
   }, [rest])
 
+  // Show the chip only when the active provider is OpenCode. Also re-check the
+  // provider on the refresh cadence (covers model changes made via Settings).
+  const isOpenCode = !!providerInfo && (
+    /opencode/i.test(String(providerInfo.provider ?? '')) ||
+    /opencode/i.test(String(providerInfo.base_url ?? ''))
+  )
+
   useEffect(() => {
+    void checkProvider()
+    if (!isOpenCode) return
     void refresh()
-    const timer = setInterval(() => void refresh(), REFRESH_MS)
+    const timer = setInterval(() => {
+      void checkProvider()
+      void refresh()
+    }, REFRESH_MS)
     return () => clearInterval(timer)
-  }, [refresh])
+  }, [checkProvider, refresh, isOpenCode])
+
+  if (!isOpenCode) return null
 
   if (fetchError && !result) {
     return jsx(Tip, {
@@ -115,7 +152,7 @@ function UsageChip({ rest }) {
 export default {
   id: ID,
   name: 'OpenCode Usage',
-  description: 'OpenCode Go rolling, weekly, and monthly usage in the status bar.',
+  description: 'OpenCode Go usage in the status bar — shown only on OpenCode models.',
   defaultEnabled: false,
   register(ctx) {
     ctx.register({
