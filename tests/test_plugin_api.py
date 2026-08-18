@@ -70,3 +70,32 @@ def test_usage_normalizes_upstream_response(monkeypatch):
         "monthly": {"status": "ok", "percent": None, "resetsAt": None},
     }
     assert "secret" not in body["usage"]
+
+
+def test_request_sends_browser_user_agent(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status = 200
+
+        def read(self, _n):
+            return b'{"usage":{}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, timeout=None, context=None):
+        captured["request"] = request
+        return FakeResponse()
+
+    monkeypatch.setattr(plugin_api.urllib.request, "urlopen", fake_urlopen)
+
+    plugin_api._request_usage("test-key")
+
+    user_agent = captured["request"].get_header("User-agent")
+    assert user_agent, "request must set a User-Agent header"
+    assert "Python-urllib" not in user_agent
+

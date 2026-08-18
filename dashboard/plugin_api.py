@@ -87,9 +87,15 @@ def _normalize_usage(body: Any) -> dict[str, dict[str, Any] | None] | None:
 
 
 def _request_usage(api_key: str) -> Any:
+    # OpenCode's edge rejects the default Python-urllib User-Agent with 403,
+    # so we send a browser-like one.
     request = urllib.request.Request(
         USAGE_API_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Hermes-Agent; opencode-usage)",
+        },
     )
     context = ssl.create_default_context()
     with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS, context=context) as response:
